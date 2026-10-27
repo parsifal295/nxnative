@@ -5,6 +5,7 @@ No game files, keys or Xcode needed: a stand-in host compiled here records what 
 import contextlib
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
 import plistlib
@@ -16,6 +17,7 @@ import tempfile
 import time
 import types
 import unittest
+import uuid
 from unittest import mock
 
 REPO = Path(__file__).resolve().parents[3]
@@ -351,6 +353,7 @@ class App(unittest.TestCase):
         (t / 'aoc/1/x').write_bytes(b'dlc')
         (t / 'pso').mkdir(); (t / 'pso/applegpu_g14s.mtl4a').write_bytes(b'arch'); (t / 'pso/prebuilt.tsv').write_text('chain\t0123456789ab\n'); (t / 'pso/key.x').write_text('not for the app')
         (t / 'env.txt').write_text('# baked in\nDM_BAKED=1\nDM_BOTH=bundle\n')
+        (t / 'launcher.json').write_text('{"game": "x", "settings": []}\n')
         subprocess.run(['sips', '-s', 'format', 'jpeg', '-z', '256', '256', '/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/GenericApplicationIcon.icns',
                         '--out', t / 'icon.jpg'], check=True, capture_output=True)
         (t / 'bin/osascript').write_text('#!/bin/sh\necho "$@" > "$HOME/alert.txt"\nprintf "%s\\0" "$@" > "$HOME/alert.args"\n'
@@ -358,7 +361,7 @@ class App(unittest.TestCase):
         (t / 'bin/osascript').chmod(0o755)
         cls.app = t / 'Game - Test.app'
         cls.args = pack_app.parse([str(cls.app), '--host', str(t / 'dmhost'), '--patched', str(t / 'patched'), '--romfs', str(t / 'romfs'), '--msl', str(t / 'cache/b-0123456789ab'),
-                                   '--tables', str(t / 'profile'), '--font', str(t / 'font'), '--aoc', str(t / 'aoc'), '--pso', str(t / 'pso'), '--env-file', str(t / 'env.txt'), '--title-id', TID.lower(),
+                                   '--tables', str(t / 'profile'), '--font', str(t / 'font'), '--aoc', str(t / 'aoc'), '--pso', str(t / 'pso'), '--env-file', str(t / 'env.txt'), '--settings', str(t / 'launcher.json'), '--title-id', TID.lower(),
                                    '--name', 'Game: Test', '--version', '1.0.1', '--lang', 'fr', '--marker', 'region_common/audio/edward.bfsar', '--icon', str(t / 'icon.jpg'),
                                    '--category', 'public.app-category.games'])
         with contextlib.redirect_stdout(io.StringIO()): pack_app.pack(cls.args)
@@ -366,11 +369,11 @@ class App(unittest.TestCase):
     @classmethod
     def tearDownClass(cls): shutil.rmtree(cls.tmp)
 
-    def launch(self, wait=False, **env):
+    def launch(self, wait=False, app=None, **env):
         home = self.tmp / 'home'
         e = dict(HOME=str(home), PATH=f'{self.tmp / "bin"}:/usr/bin:/bin', **env)
         if wait: e['STANDIN_WAIT'] = '1'
-        return subprocess.Popen([self.app / 'Contents/MacOS/nxnative'], env=e, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        return subprocess.Popen([(app or self.app) / 'Contents/MacOS/nxnative'], env=e, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
     def host_run(self):
         out = {}
@@ -383,7 +386,7 @@ class App(unittest.TestCase):
         self.assertFalse(self.app.with_name(self.app.name + '.partial').exists())
         self.assertEqual(sorted(p.name for p in (c / 'MacOS').iterdir()), ['dmhost', 'nxnative'])
         self.assertEqual(sorted(p.name for p in (c / 'Resources/dm').iterdir()),
-                         ['c1_full.tsv', 'env.txt', 'font', 'main.cuts.tsv', 'main.fixups.tsv', 'main.gates.tsv', 'main.obs.tsv', 'main.patched.bin', 'pso_manifest.tsv', 'pso_pairs.tsv',
+                         ['c1_full.tsv', 'env.txt', 'font', 'launcher.json', 'main.cuts.tsv', 'main.fixups.tsv', 'main.gates.tsv', 'main.obs.tsv', 'main.patched.bin', 'pso_manifest.tsv', 'pso_pairs.tsv',
                           'shader_map.tsv', 'shader_pairs.tsv'])   # the shader pairs: the pipeline prebuild's, without which hybrid draws have no stand-in
         self.assertEqual([p.name for p in (c / 'Resources/msl').iterdir()], ['b-0123456789ab'])   # the libraries only, not the compile cache
         self.assertEqual(sorted(p.name for p in (c / 'Resources/msl/b-0123456789ab').iterdir()), ['inputs.tsv', 'k_b.json', 'k_b.metallib'])
@@ -411,6 +414,60 @@ class App(unittest.TestCase):
         p = plistlib.loads((self.app / 'Contents/Info.plist').read_bytes())
         self.assertEqual((p['CFBundleExecutable'], p['CFBundleName'], p['CFBundleIdentifier'], p['CFBundleShortVersionString']), ('nxnative', 'Game: Test', 'org.nxnative.01008cf01baac000', '1.0.1'))
         self.assertEqual((p['DMTitleID'], p['DMLanguage'], p['DMRomfsMarker'], p['CFBundleIconFile']), (TID, 'fr', 'region_common/audio/edward.bfsar', 'AppIcon'))
+        self.assertEqual(p['DMSettings'], [])   # launcher.json's settings, as the saved choices they accept: none here
+
+    def test_saved_choices(self):
+        """launcher.<VAR> in the app's preferences domain, as a front end or a settings window saves it: used from Finder or the Dock, checked against this build's settings,
+        after the launch environment, the player's env.txt and the bundle's, and ignored with DM_SAVED_CHOICES=0"""
+        domain = f'org.nxnative.test.{uuid.uuid4().hex}'   # never a real game's domain
+        listed = {'schema': 1, 'game': TID, 'settings': [
+            {'env': 'DM_FPS_TARGET', 'kind': 'choice', 'section': 'Game', 'label': 'Frame rate', 'note': '', 'default': '60', 'options': [['30', '30 fps'], ['60', '60 fps']]},
+            {'env': 'DM_RENDER_SCALE', 'kind': 'range', 'section': 'Game', 'label': 'Render scale', 'note': '', 'default': '1.0', 'min': 0.5, 'max': 1.0, 'step': 0.05},
+            {'env': 'DM_FPS_HOLD', 'kind': 'toggle', 'section': 'Performance', 'label': 'Hold', 'note': '', 'default': 'on', 'on': 'on', 'off': 'off'},
+            {'env': 'DM_LANG', 'kind': 'choice', 'section': 'Game', 'label': 'Language', 'note': '', 'default': 'fr', 'options': [['fr', 'French'], ['ja', 'Japanese']]},
+            {'env': 'DM_BOTH', 'kind': 'choice', 'section': 'Game', 'label': 'Both', 'note': '', 'default': 'bundle', 'options': [['bundle', 'b'], ['player', 'p'], ['saved', 's']]},
+            {'env': 'DM_BAKED', 'kind': 'toggle', 'section': 'Game', 'label': 'Baked', 'note': '', 'default': '1', 'on': '1', 'off': '0'}]}
+        sup = self.tmp / f'home/Library/Application Support/nxnative/{TID}'; sup.mkdir(parents=True, exist_ok=True); (sup / 'env.txt').write_text('DM_BOTH=player\n')
+
+        def pack(name, settings):
+            (self.tmp / f'{name}.json').write_text(json.dumps(settings))
+            a = types.SimpleNamespace(**vars(self.args)); a.out = str(self.tmp / f'{name}.app'); a.icon = None; a.bundle_id = domain; a.settings = str(self.tmp / f'{name}.json')
+            with mock.patch.object(pack_app, 'sign', lambda *x: None), mock.patch('sys.stdout'): pack_app.pack(a)
+            return self.tmp / f'{name}.app'
+
+        def run(app, **env):
+            p = self.launch(app=app, **env); out = p.communicate(timeout=30)[0].decode()
+            self.assertEqual(p.returncode, 7, out)
+            return self.host_run()
+
+        def save(key, *value): subprocess.run(['defaults', 'write', domain, f'launcher.{key}', *value], check=True)
+        try:
+            app = pack('Saved', listed)
+            self.assertEqual(plistlib.loads((app / 'Contents/Info.plist').read_bytes())['DMSettings'][:3],
+                             [{'env': 'DM_FPS_TARGET', 'values': ['30', '60']}, {'env': 'DM_RENDER_SCALE', 'min': 0.5, 'max': 1.0}, {'env': 'DM_FPS_HOLD', 'values': ['on', 'off']}])
+            for key, value in [('DM_FPS_TARGET', '30'), ('DM_RENDER_SCALE', '0.75'), ('DM_FPS_HOLD', 'maybe'), ('DM_LANG', 'ja'), ('DM_BOTH', 'saved'), ('DM_BAKED', '0')]: save(key, '-string', value)
+            save('DM_OPMODE', '-string', '0')   # not one of this build's settings
+            r = run(app)   # from Finder or the Dock: no environment of its own
+            self.assertEqual((r['DM_FPS_TARGET'], r['DM_RENDER_SCALE'], r.get('DM_FPS_HOLD')), ('30', '0.75', None))   # a value the toggle never takes is ignored
+            self.assertEqual(r['DM_LANG'], 'ja')   # a saved choice before the packed language
+            self.assertEqual((r['DM_BOTH'], r['DM_BAKED']), ('player', '1'))   # the player's env.txt and the bundle's win over a saved choice
+            self.assertNotIn('DM_OPMODE', r)
+            r = run(app, DM_FPS_TARGET='60', DM_RENDER_SCALE='0.5')   # a front end's launch overrides: they win, and are not saved
+            self.assertEqual((r['DM_FPS_TARGET'], r['DM_RENDER_SCALE']), ('60', '0.5'))
+            self.assertEqual(subprocess.run(['defaults', 'read', domain, 'launcher.DM_FPS_TARGET'], capture_output=True, text=True).stdout.strip(), '30')
+            r = run(app, DM_SAVED_CHOICES='0')
+            self.assertEqual((r.get('DM_FPS_TARGET'), r.get('DM_RENDER_SCALE'), r['DM_LANG']), (None, None, 'fr'))
+            save('DM_RENDER_SCALE', '-float', '0.75')   # not a string
+            self.assertNotIn('DM_RENDER_SCALE', run(app))
+            save('DM_RENDER_SCALE', '-string', ' 0.75')   # a number the iPhone's settings screen would not take either
+            self.assertNotIn('DM_RENDER_SCALE', run(app))
+            listed['settings'][0]['options'] = [['60', '60 fps']]; listed['settings'][0]['default'] = '60'   # a rebuild that no longer offers 30 fps
+            r = run(pack('Rebuilt', listed))
+            self.assertEqual((r.get('DM_FPS_TARGET'), r['DM_LANG']), (None, 'ja'))   # the host's tested default; the other saved choices still hold
+            self.assertIn('saved choice DM_FPS_TARGET=30 ignored', (self.tmp / f'home/Library/Logs/nxnative/{TID}.log').read_text())
+        finally:
+            subprocess.run(['defaults', 'delete', domain], capture_output=True)
+            Path(os.path.expanduser(f'~/Library/Preferences/{domain}.plist')).unlink(missing_ok=True)
 
     def test_signed(self):   # ad-hoc, both the host and the bundle, never the hardened runtime (it refuses the executable memory the host makes for the game's code)
         for target in (self.app, self.app / 'Contents/MacOS/dmhost'):
@@ -546,11 +603,13 @@ class Script(unittest.TestCase):
         self.assertEqual(nsp.mac_app_name('AC/DC'), 'AC - DC'); self.assertEqual(nsp.mac_app_name(':'), 'nxnative')
 
     def pack_cmd(self, gfx, **kw):
-        ran, tmp = [], Path(tempfile.mkdtemp(dir=TEST_ROOT)); self.addCleanup(shutil.rmtree, tmp); self.said = []
+        ran, tmp = [], Path(tempfile.mkdtemp(dir=TEST_ROOT)); self.addCleanup(shutil.rmtree, tmp); self.said = []; self.settings_env = {}
         if kw.get('work'): tmp = kw['work']
         out = tmp / 'G.app'; shutil.rmtree(out, ignore_errors=True)
         def fake_run(cmd, log, env=None, cwd=None, on_line=None):
             ran.append([str(c) for c in cmd])
+            if str(cmd[1]).endswith('dm/games/settings.py'):   # the launcher settings, before the packer
+                self.settings_env = env; Path(cmd[-1]).write_text('{}'); return
             if not on_line:   # pso_offline.py: its archive, or none when every eligible pair has function constants
                 o = Path(cmd[cmd.index('--out') + 1]); o.mkdir(parents=True, exist_ok=True)
                 if not kw.get('no_bases'): (o / f'{cmd[cmd.index("--gpu") + 1]}.mtl4a').write_bytes(b'arch')
@@ -564,7 +623,8 @@ class Script(unittest.TestCase):
              mock.patch.object(nsp, 'mac_gpu_arch', lambda *a: 'applegpu_g14s'), mock.patch.object(nsp, 'say', self.said.append):
             nsp.mac_app(sys.executable, REPO, out, 0x01008CF01BAAC000, tmp, tmp / 'ex', tmp / 'patched', tmp / 'dmhost', tmp / 'font', tmp / 'shader/cache' if gfx == 'nvn' else tmp / 'shader',
                         kw.get('aoc'), gfx, 'en-US', g, 'Game', '1.0.0', 'org.nxnative.01008cf01baac000', None, kw.get('sign', ''), {}, tmp, gpus=kw.get('gpus', ''))
-        self.pso_cmd = ran[0] if len(ran) > 1 else None   # pso_offline.py, before the packer
+        self.pso_cmd = next((c for c in ran if c[1].endswith('pso_offline.py')), None)   # before the packer
+        self.settings_cmd = next(c for c in ran if c[1].endswith('dm/games/settings.py'))
         c = ran[-1]; return {c[i]: c[i + 1] for i in range(3, len(c) - 1) if c[i].startswith('--')}, tmp
 
     def test_pack_command(self):
@@ -578,6 +638,9 @@ class Script(unittest.TestCase):
                          (str(tmp / 'shader/cache/b-0123456789ab'), str(tmp / 'ex/RomFS'), str(tmp / 'profile'), TID, '-', 'a/b'))
         self.assertNotIn('--aoc', o); self.assertNotIn('--icon', o)
         self.assertNotIn('--pso', o)   # no shader pairs: no pipeline archive
+        self.assertEqual(o['--settings'], str(tmp / 'app/launcher.json'))   # the launcher settings the Mac front end reads, without the iPhone's own switches
+        self.assertEqual(self.settings_cmd[2:], ['01008CF01BAAC000', str(tmp / 'patched'), str(tmp / 'ex/control.nacp'), str(tmp / 'app/launcher.json')])
+        self.assertEqual((self.settings_env['SETTINGS_PLATFORM'], self.settings_env['GFXAPI'], self.settings_env['DM_LANG']), ('mac', 'nvn', 'en-US'))
         o, tmp = self.pack_cmd('vulkan', aoc=Path('/x/aoc'), sign='Developer ID Application: X (T)')
         self.assertEqual((o['--msl'], o['--aoc'], o['--sign']), (str(tmp / 'shader/vk'), '/x/aoc', 'Developer ID Application: X (T)'))
 
