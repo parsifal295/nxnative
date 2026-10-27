@@ -129,9 +129,11 @@ One line per symptom in the [subsystem references](../reference/): what you see 
 - DLC the player owns is not unlocked. → [Add-on content from `DM_AOC_DIR`](../reference/services.md#add-on-content-from-dm_aoc_dir)
 - SIGSEGV in `crypto::detail::CbcModeAes128Helper::DecryptBlocks` with a null destination (`main+0x8737e8`, right after `aoc:` is mounted). → [Add-on content mount cache sized as RomFS working memory](../reference/services.md#add-on-content-mount-cache-sized-as-romfs-working-memory)
 - SIGBUS in `__vfprintf` under `aoc_load`, from `h_aoc_Count` (a store to `0x…67ff0`, right below a page of the guest thread's stack). → [Add-on content queries on a small guest stack](../reference/services.md#add-on-content-queries-on-a-small-guest-stack)
+- clang reports a negative shift in `fill` or `vib_targets` (`hle_hid.c`). → [Controller disconnect between style and player lookup](../reference/services.md#controller-disconnect-between-style-and-player-lookup)
 - buttons and menus work, the sticks do nothing in play (Super Mario Odyssey: its first hint, "Look Around", waited forever); an `nn::diag` abort with Result 0x2aca in the first frames of `nnMain` (Hollow Knight: Silksong, Unity 6000.0.50f1: `bt: sdk+0x514580 main+0x1296c64 …`). → [History reads fill every requested entry](../reference/services.md#history-reads-fill-every-requested-entry)
 - the game never reads the controller (the title's "Press L+R" never sees a press; no `GetNpadState` call at all). → [Npad style set update event](../reference/services.md#npad-style-set-update-event)
 - motion moves never happen; shaking does nothing (Super Mario Odyssey: cap throws by shaking). → [Six-axis sensors](../reference/services.md#six-axis-sensors)
+- motion controls do nothing with a controller that has a gyroscope (Breath of the Wild: aiming with its Motion Controls option on); the six-axis sensor always lies flat. → [Live controller motion](../reference/services.md#live-controller-motion)
 - SDK 20 calls that reach a service; `nfp`'s `AttachActivateEvent` / `AttachDeactivateEvent` crashed in the SDK at `sdk+0x3f2a78`. → [SDK 20 six-axis sensor and amiibo (`nfp`) calls](../reference/services.md#sdk-20-six-axis-sensor-and-amiibo-nfp-calls)
 - abort in `nn::sm::Initialize` under `nn::hid::VibrationNode::Update`. → [Vibration values flushed by the SDK's vibration graph](../reference/services.md#vibration-values-flushed-by-the-sdks-vibration-graph)
 - `DM_RUMBLE_LOG=1` shows the game's startup handle request answered with none, then every vibration value sent to handle 0 and reaching no output for the whole session, although a controller with haptics (a DualSense on the Mac) is connected. A game that rumbles would stay silent. → [Vibration handles before a controller is reported](../reference/services.md#vibration-handles-before-a-controller-is-reported)
@@ -242,6 +244,7 @@ One line per symptom in the [subsystem references](../reference/): what you see 
 
 ## Frame rate
 
+- clang reports division by zero in `fstep_tick` (`hle_nvn.c`). → [Frame cap checked and used from the same sample](../reference/frame-rate.md#frame-cap-checked-and-used-from-the-same-sample)
 - a 30 fps game to run at 60; after the floor was lowered, slow motion on a GPU-bound device (GitHub issue #9). → [sead's dynamic present interval, `ksys::VFR` and the host's frame step](../reference/frame-rate.md#seads-dynamic-present-interval-ksysvfr-and-the-hosts-frame-step)
 - on an iPhone, a game with the frame step at 60 fps drops a frame in most windows after a few minutes, and its GPU time per frame roughly doubles to triples (17-26 ms for the same scenes). → [A thermally serious iPhone holds 30 fps](../reference/frame-rate.md#a-thermally-serious-iphone-holds-30-fps)
 - after a 30 fps cap ends (a prerendered movie, the thermal cap), a GPU-bound game stays at 30 fps in a scene that held 60 before the cap; the log shows `frame step cap 30 → 60 fps` and a few frames later `frame step: hold 1 → 2 vsyncs at present … (3 late frames; …)`, with no probe after it. → [The frame step after a 30 fps cap ends](../reference/frame-rate.md#the-frame-step-after-a-30-fps-cap-ends)
@@ -321,6 +324,7 @@ One line per symptom in the [subsystem references](../reference/): what you see 
 
 ## Rendering
 
+- clang reports null dereferences in `nvnWindowInitialize` and `clear_tex`; clearing a null texture crashes with `DM_NVN_PASSDUMP=1`. → [Null textures in diagnostic logs](../reference/rendering.md#null-textures-in-diagnostic-logs)
 - Metal aborts on a texture descriptor with an absurd size (`height (1869367126) greater than … 16384`). → [Texture objects copied into command records](../reference/rendering.md#texture-objects-copied-into-command-records)
 - a decoded movie stays black even though its YUV textures contain the picture; disabling its depth test makes it visible. → [New textures start as zero](../reference/rendering.md#new-textures-start-as-zero)
 - glyphs render as white boxes (the font atlas is `(1, 1, 1, R)`). → [Texture swizzle through swizzled Metal views](../reference/rendering.md#texture-swizzle-through-swizzled-metal-views)
