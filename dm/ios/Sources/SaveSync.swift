@@ -20,7 +20,7 @@ public func dmSaveSyncFolder() -> UnsafeMutablePointer<CChar>? {
 }
 
 struct SaveSyncSection: View {
-    private let locked = (ProcessInfo.processInfo.environment["DM_ENV_FILE_KEYS"] ?? "").split(separator: " ").contains("DM_SAVE_SYNC")
+    private let locked = ["DM_ENV_FILE_KEYS", "DM_ENV_LAUNCH_KEYS"].contains { (ProcessInfo.processInfo.environment[$0] ?? "").split(separator: " ").contains("DM_SAVE_SYNC") }   // set by an env file or the launch environment
     @State private var folder = ProcessInfo.processInfo.environment["DM_SAVE_SYNC"].map { URL(fileURLWithPath: $0).lastPathComponent }
     @State private var picking = false
 
@@ -37,7 +37,7 @@ struct SaveSyncSection: View {
         } header: {
             Text("Save sync")
         } footer: {
-            Text(locked ? "Set by an env file" : "Pick iCloud Drive → nxnative-saves, the folder the Mac app uses (open the Mac app once, or make the folder in the picker, if it is not there yet), to carry this game's save between them. If both sides changed, the game asks which save to keep.")
+            Text(locked ? "Set by an env file or the launch environment" : "Pick iCloud Drive → nxnative-saves, the folder the Mac app uses (open the Mac app once, or make the folder in the picker, if it is not there yet), to carry this game's save between them. If both sides changed, the game asks which save to keep.")
         }
         .disabled(locked)
         .fileImporter(isPresented: $picking, allowedContentTypes: [.folder]) { result in
